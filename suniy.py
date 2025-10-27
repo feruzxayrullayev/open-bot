@@ -1,8 +1,8 @@
-# main.py
+# app.py
 import os
 from dotenv import load_dotenv
+from flask import Flask, request
 import telebot
-from telebot import types
 from datetime import datetime, timedelta
 from openai import OpenAI
 
@@ -13,16 +13,18 @@ BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "5467496016"))
 
-# Agar API yoki TOKEN bo'lmasa xatolik
 if not BOT_TOKEN or not OPENAI_API_KEY:
     raise ValueError("🔑 TELEGRAM_TOKEN yoki OPENAI_API_KEY Environment Variables o'rnatilmagan!")
 
 # === Klientlar ===
 client = OpenAI(api_key=OPENAI_API_KEY)
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)  # webhookda threaded=False tavsiya qilinadi
 
 # Foydalanuvchilar
 users = {}
+
+# === Flask ilovasi ===
+app = Flask(__name__)
 
 # === START komandasi ===
 @bot.message_handler(commands=['start'])
@@ -50,6 +52,7 @@ def admin_panel(message):
     if message.from_user.id != ADMIN_ID:
         return bot.reply_to(message, "❌ Sizda admin ruxsati yo‘q.")
     
+    from telebot import types
     markup = types.InlineKeyboardMarkup()
     markup.add(
         types.InlineKeyboardButton("➕ VIP ulash", callback_data="add_vip"),
@@ -120,8 +123,7 @@ def handle_message(message):
 
     if not user["is_vip"] and user["daily_uses"] >= 3:
         return bot.reply_to(message, "⚠️ Siz bugun 3 ta so‘rov limitiga yetdingiz.\n"
-                                     "👑 VIP olish uchun admin bilan bog‘laning"
-                                     " @XAYRULLAYEVFERUZ.")
+                                     "👑 VIP olish uchun admin bilan bog‘laning @XAYRULLAYEVFERUZ.")
 
     try:
         response = client.chat.completions.create(
@@ -137,6 +139,25 @@ def handle_message(message):
     except Exception as e:
         bot.reply_to(message, f"⚠️ Xatolik yuz berdi:\n{str(e)}")
 
-# === Botni ishga tushirish ===
-print("🤖 Bot ishga tushdi...")
-bot.infinity_polling()
+# === Flask webhook route ===
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    json_str = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return "ok", 200
+
+# === Flask index route (tekshirish uchun) ===
+@app.route("/")
+def index():
+    return "Bot Render’da ishlamoqda!"
+
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 5000))
+    
+    # Render-da webhookni sozlash
+    WEBHOOK_URL = f"https://srv-d3vh5e2li9vc73cr0dag.onrender.com/{BOT_TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+    
+    app.run(host="0.0.0.0", port=PORT)
